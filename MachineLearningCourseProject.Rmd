@@ -1,0 +1,165 @@
+---
+title: "Machine Learning Weight Lifting Prediction"
+author: "Darren Seaman"
+date: "Sunday, May 24, 2015"
+output: html_document
+---
+```{r,echo=FALSE, results='hide', message=FALSE}
+library(caret)
+library(randomForest)
+```
+###Question
+Can data elements collected from accelorometers be used to predict if test
+subjects correctly performed barbell lifts.
+
+###Data
+Data was provided from 6 different subjects, and from from accelerometers 
+on the belt, forearm, arm, and dumbell.  Links are provided in the R code
+below
+
+download the data
+```{r,echo=TRUE}
+setInternet2(use = TRUE)
+fileurl = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download.file(fileurl,destfile="WLE.csv")
+trainstart <- read.csv("WLE.csv",header=TRUE)
+
+##validate the data import by checking the number of rows
+nrow(trainstart)
+```
+
+###Pre-processing the data
+The first step is to separate the training data into to a purely training set of data
+and a cross validation set of data. Per lecture notes a 60% training 40% validation
+was chosen
+
+```{r,echo=TRUE, results='hide'}
+set.seed(1234)
+trainflag <- createDataPartition(y=trainstart$classe,p=.6,list=FALSE)
+traintrain <- trainstart[trainflag,]
+traincv <- trainstart[-trainflag,]
+dim(traintrain);dim(traincv)
+names(traintrain)
+head(traintrain)
+str(traintrain)
+summary(traintrain)
+```
+
+Reviewing the output of the above information (not shown here 
+but can be reproduced using the .rmd file it was observed that
+there were many rows with almost entirely NA or blank
+values.
+At first imputing values was considered using techniques such as
+knnImpute but given that a majority of the values were missing
+or NA the columns were removed entirely.
+```{r,echo=TRUE, results='hide'}
+percentNAS <- sapply(traintrain,function(t) sum(is.na(t))/(sum(!is.na(t))+sum(is.na(t))))
+      
+traintrain_NONAS <- traintrain[,(percentNAS<.5)] 
+
+percentblank <- sapply(traintrain_NONAS,
+                       function(b) sum((b==""))/(sum(!(b==""))+sum((b==""))))
+
+traintidy <- traintrain_NONAS[,(percentblank<.5)]
+```
+The first column in the data is a row count, however because the classe outcome
+appears to be sorted in the input dataset this variable needed to be removed
+leaving it in the model resulted in rows with low row counts being assigned
+to classe A and high row counts to class E
+also dropped other variables that were deemed irrelevant such as the test subject
+and time stamps.
+```{r,echo=TRUE, results='hide'}
+dropvars <- c("cvtd_timestamp","X","user_name",
+              "new_window","raw_timestamp_part_1",
+              "raw_timestamp_part_2","num_window")
+traintidy <-traintidy[,!(names(traintidy) %in% dropvars)]
+```
+take a look at a plot of the outcomes to make sure there
+are similar numbers for each of the outcomes
+```{r,echo=TRUE,}
+qplot(classe,data=traintidy,geom="histogram")
+```
+
+check for any NA's or missing in the remaining data
+and take a look at the summary information for the final
+training set of data
+```{r,echo=TRUE, results='hide'}
+NACHECK <- sapply(traintidy,function(t) sum(is.na(t)))
+NACHECK
+NACOLS <- traintidy[,(NACHECK > 0)]
+NACOLS
+
+BLANKCHECK <- sapply(traintidy,function(b) sum(b==""))
+BLANKCHECK
+BLANKCOLS <- traintidy[,(BLANKCHECK > 0)]
+BLANKCOLS
+```
+```{r,echo=TRUE,}
+summary(traintidy)
+```
+
+Other preprocessing steps were considered such as principle component anlaysis
+were explored, but are not included herein.  Predictor standardization, box cox,
+and logging also didn't seem necessary.  Plots of the original predictors
+were also considered but not included due to the significant number of plots
+
+###Choose the algorithm - Train the Model
+Because this is a classification prediction linear models such as regression
+are not applicable
+The best approach is most likely classification trees, but rather than use just
+a single tree whcy not use a better and highly accurate method of random forest
+```{r,echo=TRUE}
+set.seed(1234)
+modelRanForest <- randomForest(classe ~ .,n.var=25,data=traintidy,importance=TRUE)
+modelRanForest
+```
+Review the Importance output (only for the top 10)
+```{r,echo=TRUE}
+varImpPlot(modelRanForest,sort=TRUE,n.var=10,main="Variable Importance Plot")
+```
+
+NOTE: Initially ran the code below as part of the caret package
+however it took too long so decided to use the randomForest package
+the results were the same.
+```{r,echo=TRUE}
+##modelRanForest <- train(classe ~ .,data = traintidy,method ='rf')
+##modelRanForest
+```
+###Cross Validation and out of sample error rate
+Theoretically speaking the out of sample error rate (generalization error)
+should be higher than the in sample error rate (resubstitution error).  From
+the table output above the in sample error rate is 77 (assigned the incorrect
+class) out of 11,776 or 0.65% (representing an accuracy of 99.35%.  To find 
+the out of sample error rate the model can be applied to the validation 
+set of data.
+
+```{r,echo=TRUE}
+pred <- predict(modelRanForest,traincv)
+table(pred,traincv$classe)
+```
+From the table above we can see the error rate is 60 out of 7,846 or
+0.76% (accuracy of 99.24%) which confirms the theory above.
+
+###Evaluation
+```{r,echo=TRUE}
+setInternet2(use = TRUE)
+fileurl = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(fileurl,destfile="WLE_OUTSAMPLE.csv")
+teststart <- read.csv("WLE_OUTSAMPLE.csv",header=TRUE)
+
+testpred1 <- predict(modelRanForest,teststart)
+```
+Results not shown here intentionally
+```{r,echo=FALSE,results='hide'}
+testpred1
+
+pml_write_files = function(x){
+        n = length(x)
+        for(i in 1:n){
+                filename = paste0("problem_id_",i,".txt")
+                write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+        }
+}
+
+pml_write_files(testpred1)
+```
